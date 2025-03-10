@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Карта с маршрутом</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        #inputs {
+            margin-bottom: 10px;
+        }
+        button {
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
+            margin: 2px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: #f0f0f0;
+        }
+        button:hover {
+            background-color: #e0e0e0;
+        }
+        table {
+            margin: 0 auto;
+        }
+        input {
+            width: 100px;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="controls">
+        <div id="inputs">
+            <label for="pricePerMeter">Цена за 1 метр (руб):</label><br>
+            <input type="number" id="pricePerMeter" min="1" value="1"><br>
+            <label for="donation">Сумма (руб):</label><br>
+            <input type="number" id="donation" min="0" value="200">
+        </div>
+        <table>
+            <tr>
+                <td></td>
+                <td><button onclick="move('up')"><i class="fas fa-arrow-up"></i></button></td>
+                <td></td>
+            </tr>
+            <tr>
+                <td><button onclick="move('left')"><i class="fas fa-arrow-left"></i></button></td>
+                <td><button onclick="setStartPoint()"><i class="fas fa-map-pin"></i></button></td>
+                <td><button onclick="move('right')"><i class="fas fa-arrow-right"></i></button></td>
+            </tr>
+            <tr>
+                <td></td>
+                <td><button onclick="move('down')"><i class="fas fa-arrow-down"></i></button></td>
+                <td></td>
+            </tr>
+        </table>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Инициализация карты
+        const map = L.map('map').setView([55.751244, 37.618423], 13); // Москва как пример
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        // Переменные для маршрута
+        let currentPos = null;
+        let polyline = null;
+        let marker = null;
+
+        // Установка начальной точки по клику
+        let settingStartPoint = false;
+        function setStartPoint() {
+            settingStartPoint = true;
+            map.once('click', function(e) {
+                if (currentPos) {
+                    if (polyline) map.removeLayer(polyline);
+                    if (marker) map.removeLayer(marker);
+                }
+
+                currentPos = [e.latlng.lat, e.latlng.lng];
+                marker = L.marker(currentPos).addTo(map);
+                polyline = L.polyline([currentPos], { color: 'blue' }).addTo(map);
+                map.panTo(currentPos);
+                settingStartPoint = false;
+            });
+        }
+
+        // Функция для вычисления новой координаты
+        function calculateNewPosition(lat, lng, distance, direction) {
+            const R = 6371000; // Радиус Земли в метрах
+            const latRad = lat * Math.PI / 180; // Широта в радианах
+            const lngRad = lng * Math.PI / 180; // Долгота в радианах
+
+            let newLat, newLng;
+
+            switch (direction) {
+                case 'up':
+                    newLat = lat + (distance / R) * (180 / Math.PI);
+                    newLng = lng;
+                    break;
+                case 'down':
+                    newLat = lat - (distance / R) * (180 / Math.PI);
+                    newLng = lng;
+                    break;
+                case 'right':
+                    newLat = lat;
+                    newLng = lng + (distance / (R * Math.cos(latRad))) * (180 / Math.PI);
+                    break;
+                case 'left':
+                    newLat = lat;
+                    newLng = lng - (distance / (R * Math.cos(latRad))) * (180 / Math.PI);
+                    break;
+                default:
+                    return [lat, lng];
+            }
+
+            return [newLat, newLng];
+        }
+
+        // Функция движения
+        function move(direction) {
+            if (!currentPos) {
+                alert("Сначала установите начальную точку!");
+                return;
+            }
+
+            const pricePerMeter = parseFloat(document.getElementById('pricePerMeter').value) || 1;
+            const donation = parseFloat(document.getElementById('donation').value) || 0;
+            const distance = donation / pricePerMeter; // Расстояние в метрах
+
+            if (distance <= 0) {
+                alert("Введите сумму больше 0!");
+                return;
+            }
+
+            // Вычисляем новую позицию
+            const newPos = calculateNewPosition(currentPos[0], currentPos[1], distance, direction);
+
+            // Добавляем точку в маршрут
+            polyline.addLatLng(newPos);
+            currentPos = newPos;
+            map.panTo(newPos);
+
+            // Для проверки: вычисляем реальное расстояние между точками
+            const start = L.latLng(polyline.getLatLngs()[0]);
+            const end = L.latLng(newPos);
+            console.log(`Расстояние: ${start.distanceTo(end).toFixed(2)} метров`);
+        }
+    </script>
+</body>
+</html>
