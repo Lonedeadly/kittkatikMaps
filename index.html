@@ -1,177 +1,339 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Карта с маршрутом</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <title>Шахматка бронирования</title>
     <style>
-        body, html {
+        body {
+            font-family: Arial, sans-serif;
             margin: 0;
-            padding: 0;
-            height: 100%;
-            overflow: hidden;
+            padding: 20px;
+            background-color: #f5f5f5;
         }
-        #map {
-            height: 100%;
-            width: 100%;
+
+        .container {
+            position: relative;
+            max-width: 100%;
+            overflow-x: auto;
         }
-        #controls {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            z-index: 1000;
-            background: white;
-            padding: 10px;
-            border-radius: 5px;
-            text-align: center;
-        }
-        #inputs {
-            margin-bottom: 10px;
-        }
-        button {
-            width: 40px;
-            height: 40px;
-            font-size: 18px;
-            margin: 2px;
+
+        .grid {
+            display: grid;
+            grid-template-columns: 150px repeat(auto-fit, minmax(50px, 1fr));
             border: 1px solid #ccc;
-            border-radius: 5px;
-            cursor: pointer;
+            background-color: white;
+        }
+
+        .header-cell, .body-cell {
+            padding: 10px;
+            border-right: 1px solid #ccc;
+            border-bottom: 1px solid #ccc;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .header-cell:first-child, .body-cell:first-child {
             background-color: #f0f0f0;
+            font-weight: bold;
+            position: sticky;
+            left: 0;
+            z-index: 1;
         }
-        button:hover {
-            background-color: #e0e0e0;
+
+        .bookings-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
         }
-        table {
-            margin: 0 auto;
+
+        .booking {
+            pointer-events: all;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            border-radius: 4px;
+            cursor: grab;
+            user-select: none;
+            position: relative;
+            overflow: hidden;
+            white-space: nowrap;
+            padding: 0 5px;
         }
-        input {
-            width: 100px;
-            margin: 5px 0;
+
+        .booking.grabbing {
+            opacity: 0.7;
+            cursor: grabbing;
+        }
+
+        .booking-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+        }
+
+        .left-handle, .right-handle {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 10px;
+            cursor: ew-resize;
+            z-index: 2;
+        }
+
+        .left-handle {
+            left: 0;
+        }
+
+        .right-handle {
+            right: 0;
+        }
+
+        /* Цвета по статусам */
+        .status-confirmed {
+            background: linear-gradient(to right, #007bff, #00bfff);
+        }
+
+        .status-preliminary {
+            background: linear-gradient(to right, #fd7e14, #ffc107);
+        }
+
+        .status-blocked {
+            background: linear-gradient(to right, #6c757d, #adb5bd);
+        }
+
+        .status-checkin {
+            background: linear-gradient(to right, #28a745, #20c997);
         }
     </style>
 </head>
 <body>
-    <div id="map"></div>
-    <div id="controls">
-        <div id="inputs">
-            <label for="pricePerMeter">Цена за 1 метр (руб):</label><br>
-            <input type="number" id="pricePerMeter" min="1" value="1"><br>
-            <label for="donation">Сумма (руб):</label><br>
-            <input type="number" id="donation" min="0" value="200">
-        </div>
-        <table>
-            <tr>
-                <td></td>
-                <td><button onclick="move('up')"><i class="fas fa-arrow-up"></i></button></td>
-                <td></td>
-            </tr>
-            <tr>
-                <td><button onclick="move('left')"><i class="fas fa-arrow-left"></i></button></td>
-                <td><button onclick="setStartPoint()"><i class="fas fa-map-pin"></i></button></td>
-                <td><button onclick="move('right')"><i class="fas fa-arrow-right"></i></button></td>
-            </tr>
-            <tr>
-                <td></td>
-                <td><button onclick="move('down')"><i class="fas fa-arrow-down"></i></button></td>
-                <td></td>
-            </tr>
-        </table>
+    <div class="container">
+        <div class="grid" id="grid"></div>
+        <div class="bookings-layer" id="bookings"></div>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Инициализация карты
-        const map = L.map('map').setView([55.751244, 37.618423], 13); // Москва как пример
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        }).addTo(map);
+        // Данные (динамические)
+        const apartments = [
+            '101 — Стандарт',
+            '102 — Люкс'
+        ];
 
-        // Переменные для маршрута
-        let currentPos = null;
-        let polyline = null;
-        let marker = null;
+        const dates = [
+            '18.09', '19.09', '20.09', '21.09', '22.09', '23.09', '24.09'
+        ];
 
-        // Установка начальной точки по клику
-        let settingStartPoint = false;
-        function setStartPoint() {
-            settingStartPoint = true;
-            map.once('click', function(e) {
-                if (currentPos) {
-                    if (polyline) map.removeLayer(polyline);
-                    if (marker) map.removeLayer(marker);
-                }
+        const bookingsData = [
+            {
+                apartmentIndex: 1, // Строка (начиная с 2, т.к. 1 - заголовок)
+                startCol: 2, // Колонка (начиная с 2, т.к. 1 - квартира)
+                endCol: 4, // Включительно
+                status: 'confirmed', // confirmed, preliminary, blocked, checkin
+                text: 'Иванов И.И.',
+                id: 'booking1'
+            }
+            // Можно добавить больше броней
+        ];
 
-                currentPos = [e.latlng.lat, e.latlng.lng];
-                marker = L.marker(currentPos).addTo(map);
-                polyline = L.polyline([currentPos], { color: 'blue' }).addTo(map);
-                map.panTo(currentPos);
-                settingStartPoint = false;
+        // Генерация сетки
+        const grid = document.getElementById('grid');
+        const bookingsLayer = document.getElementById('bookings');
+
+        // Установка grid-template-rows/columns для слоя броней (синхронно с grid)
+        function updateGridTemplate() {
+            const rowCount = apartments.length + 1; // +1 для заголовка
+            const colCount = dates.length + 1; // +1 для квартир
+            grid.style.gridTemplateColumns = `150px repeat(${dates.length}, minmax(50px, 1fr))`;
+            bookingsLayer.style.display = 'grid';
+            bookingsLayer.style.gridTemplateColumns = grid.style.gridTemplateColumns;
+            bookingsLayer.style.gridTemplateRows = `repeat(${rowCount}, 40px)`; // Фиксированная высота строк
+        }
+
+        // Создание заголовка
+        function createHeader() {
+            const headerRow = document.createDocumentFragment();
+            const apartmentHeader = document.createElement('div');
+            apartmentHeader.className = 'header-cell';
+            apartmentHeader.textContent = 'Квартира';
+            headerRow.appendChild(apartmentHeader);
+
+            dates.forEach(date => {
+                const dateHeader = document.createElement('div');
+                dateHeader.className = 'header-cell';
+                dateHeader.textContent = date;
+                headerRow.appendChild(dateHeader);
+            });
+
+            grid.appendChild(headerRow);
+        }
+
+        // Создание строк квартир
+        function createBody() {
+            apartments.forEach((apt, index) => {
+                const row = document.createDocumentFragment();
+                const aptCell = document.createElement('div');
+                aptCell.className = 'body-cell';
+                aptCell.textContent = apt;
+                row.appendChild(aptCell);
+
+                dates.forEach(() => {
+                    const cell = document.createElement('div');
+                    cell.className = 'body-cell';
+                    row.appendChild(cell);
+                });
+
+                grid.appendChild(row);
             });
         }
 
-        // Функция для вычисления новой координаты
-        function calculateNewPosition(lat, lng, distance, direction) {
-            const R = 6371000; // Радиус Земли в метрах
-            const latRad = lat * Math.PI / 180; // Широта в радианах
-            const lngRad = lng * Math.PI / 180; // Долгота в радианах
+        // Создание броней
+        function createBookings() {
+            bookingsData.forEach(booking => {
+                const bookingEl = document.createElement('div');
+                bookingEl.className = `booking status-${booking.status}`;
+                bookingEl.style.gridRow = booking.apartmentIndex + 1; // +1 для заголовка
+                bookingEl.style.gridColumn = `${booking.startCol} / ${booking.endCol + 1}`;
+                const textEl = document.createElement('span');
+                textEl.className = 'booking-text';
+                textEl.textContent = booking.text;
+                bookingEl.appendChild(textEl);
 
-            let newLat, newLng;
+                // Хэндлы для ресайза
+                const leftHandle = document.createElement('div');
+                leftHandle.className = 'left-handle';
+                const rightHandle = document.createElement('div');
+                rightHandle.className = 'right-handle';
+                bookingEl.appendChild(leftHandle);
+                bookingEl.appendChild(rightHandle);
 
-            switch (direction) {
-                case 'up':
-                    newLat = lat + (distance / R) * (180 / Math.PI);
-                    newLng = lng;
-                    break;
-                case 'down':
-                    newLat = lat - (distance / R) * (180 / Math.PI);
-                    newLng = lng;
-                    break;
-                case 'right':
-                    newLat = lat;
-                    newLng = lng + (distance / (R * Math.cos(latRad))) * (180 / Math.PI);
-                    break;
-                case 'left':
-                    newLat = lat;
-                    newLng = lng - (distance / (R * Math.cos(latRad))) * (180 / Math.PI);
-                    break;
-                default:
-                    return [lat, lng];
-            }
+                bookingsLayer.appendChild(bookingEl);
 
-            return [newLat, newLng];
+                // Drag логика
+                makeDraggable(bookingEl, booking);
+
+                // Resize логика
+                makeResizable(leftHandle, bookingEl, booking, 'left');
+                makeResizable(rightHandle, bookingEl, booking, 'right');
+            });
         }
 
-        // Функция движения
-        function move(direction) {
-            if (!currentPos) {
-                alert("Сначала установите начальную точку!");
-                return;
+        // Функция для перетаскивания
+        function makeDraggable(el, booking) {
+            let startX, startColStart, startColEnd, colWidth;
+
+            el.addEventListener('mousedown', e => {
+                if (e.target.classList.contains('left-handle') || e.target.classList.contains('right-handle')) return;
+                e.preventDefault();
+                startX = e.clientX;
+                startColStart = booking.startCol;
+                startColEnd = booking.endCol;
+                colWidth = getColumnWidth();
+                el.classList.add('grabbing');
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+
+            function onMouseMove(e) {
+                const deltaX = e.clientX - startX;
+                const deltaCols = Math.round(deltaX / colWidth);
+                let newStart = startColStart + deltaCols;
+                let newEnd = startColEnd + deltaCols;
+
+                if (newStart < 2) newStart = 2;
+                if (newEnd > dates.length + 1) newEnd = dates.length + 1;
+
+                if (newEnd - newStart + 1 < 1) return; // Мин длина 1
+
+                el.style.gridColumn = `${newStart} / ${newEnd + 1}`;
             }
 
-            const pricePerMeter = parseFloat(document.getElementById('pricePerMeter').value) || 1;
-            const donation = parseFloat(document.getElementById('donation').value) || 0;
-            const distance = donation / pricePerMeter; // Расстояние в метрах
-
-            if (distance <= 0) {
-                alert("Введите сумму больше 0!");
-                return;
+            function onMouseUp() {
+                const currentCol = el.style.gridColumn.split(' / ');
+                booking.startCol = parseInt(currentCol[0]);
+                booking.endCol = parseInt(currentCol[1]) - 1;
+                el.classList.remove('grabbing');
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                logBookingChange(booking);
             }
-
-            // Вычисляем новую позицию
-            const newPos = calculateNewPosition(currentPos[0], currentPos[1], distance, direction);
-
-            // Добавляем точку в маршрут
-            polyline.addLatLng(newPos);
-            currentPos = newPos;
-            map.panTo(newPos);
-
-            // Для проверки: вычисляем реальное расстояние между точками
-            const start = L.latLng(polyline.getLatLngs()[0]);
-            const end = L.latLng(newPos);
-            console.log(`Расстояние: ${start.distanceTo(end).toFixed(2)} метров`);
         }
+
+        // Функция для ресайза
+        function makeResizable(handle, el, booking, side) {
+            let startX, startColStart, startColEnd, colWidth;
+
+            handle.addEventListener('mousedown', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                startX = e.clientX;
+                startColStart = booking.startCol;
+                startColEnd = booking.endCol;
+                colWidth = getColumnWidth();
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+
+            function onMouseMove(e) {
+                const deltaX = e.clientX - startX;
+                const deltaCols = Math.round(deltaX / colWidth);
+
+                if (side === 'left') {
+                    let newStart = startColStart + deltaCols;
+                    if (newStart < 2) newStart = 2;
+                    if (newStart > startColEnd) return; // Мин длина
+                    el.style.gridColumn = `${newStart} / ${startColEnd + 1}`;
+                } else {
+                    let newEnd = startColEnd + deltaCols;
+                    if (newEnd > dates.length + 1) newEnd = dates.length + 1;
+                    if (newEnd < startColStart) return;
+                    el.style.gridColumn = `${startColStart} / ${newEnd + 1}`;
+                }
+            }
+
+            function onMouseUp() {
+                const currentCol = el.style.gridColumn.split(' / ');
+                booking.startCol = parseInt(currentCol[0]);
+                booking.endCol = parseInt(currentCol[1]) - 1;
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                logBookingChange(booking);
+            }
+        }
+
+        // Получить ширину колонки (дат)
+        function getColumnWidth() {
+            const firstDateCell = grid.querySelector('.header-cell:nth-child(2)');
+            return firstDateCell.getBoundingClientRect().width;
+        }
+
+        // Логирование изменений (для отдачи в систему)
+        function logBookingChange(booking) {
+            const startDate = dates[booking.startCol - 2]; // -2 т.к. колонки с 2
+            const endDate = dates[booking.endCol - 2];
+            const apartmentId = apartments[booking.apartmentIndex - 1];
+            console.log({
+                bookingId: booking.id,
+                apartment: apartmentId,
+                startCol: booking.startCol,
+                endCol: booking.endCol,
+                startDate: startDate,
+                endDate: endDate
+            });
+            // Здесь можно отправить в 1C или другую систему
+        }
+
+        // Инициализация
+        updateGridTemplate();
+        createHeader();
+        createBody();
+        createBookings();
     </script>
 </body>
 </html>
